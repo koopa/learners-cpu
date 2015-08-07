@@ -4,6 +4,7 @@ const CONTROL_REG_READ_DATA  = 0x02;
 const CONTROL_REG_WRITE_ADDR = 0x03;
 const CONTROL_REG_INCREASE   = 0x04;
 
+const CONTROL_ALU_NOP  = 0x00;
 const CONTROL_ALU_ADD  = 0x01;
 const CONTROL_ALU_CMP  = 0x02;
 
@@ -286,8 +287,9 @@ export class CPU extends Component {
     }
 
     next_instruction() {
-        this.ir_control.write(CONTROL_REG_INCREASE);
-        this.instruction.notify();
+        this.reg0_control.write(CONTROL_REG_INCREASE);
+        this.reg0.notify();
+        this.reg0_control.write(CONTROL_REG_NOP);
     }
 
     run_instruction() {
@@ -307,12 +309,14 @@ export class CPU extends Component {
                 this.alu_control.write(CONTROL_ALU_ADD);
                 this.alu.notify();
                 this.next_instruction();
+                this.alu_control.write(CONTROL_ALU_NOP);
                 break;
 
             case OP_CMP:
                 this.alu_control.write(CONTROL_ALU_CMP);
                 this.alu.notify();
                 this.next_instruction();
+                this.alu_control.write(CONTROL_ALU_NOP);
                 break;
 
             case OP_HALT:
