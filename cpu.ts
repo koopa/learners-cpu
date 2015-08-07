@@ -1,7 +1,8 @@
-const CONTROL_NOP        = 0x00;
-const CONTROL_WRITE_DATA = 0x01;
-const CONTROL_READ_DATA  = 0x02;
-const CONTROL_WRITE_ADDR = 0x03;
+const CONTROL_REG_NOP        = 0x00;
+const CONTROL_REG_WRITE_DATA = 0x01;
+const CONTROL_REG_READ_DATA  = 0x02;
+const CONTROL_REG_WRITE_ADDR = 0x03;
+const CONTROL_REG_INCREASE   = 0x04;
 
 const CONTROL_ALU_ADD  = 0x01;
 const CONTROL_ALU_CMP  = 0x02;
@@ -201,8 +202,13 @@ export class CPU extends Component {
     reg2:        Register;
     reg3:        Register;
 
+    halted: boolean;
+
     constructor() {
         super();
+
+        this.halted = false;
+
         this.addr_bus       = new Bus(16);
         this.data_bus       = new Bus(16);
 
@@ -271,35 +277,48 @@ export class CPU extends Component {
         };
     }
     fetch_instruction() {
-        this.ir_control.write(CONTROL_READ_DATA);
-        this.reg0_control.write(CONTROL_WRITE_ADDR);
+        this.ir_control.write(CONTROL_REG_READ_DATA);
+        this.reg0_control.write(CONTROL_REG_WRITE_ADDR);
 
         this.reg0       .notify();
         this.memory     .notify();
         this.instruction.notify();
     }
 
+    next_instruction() {
+        this.ir_control.write(CONTROL_REG_INCREASE);
+        this.instruction.notify();
+    }
+
     run_instruction() {
+        if (this.halted) {
+            return;
+        }
+
         var op = this.decode(this.instruction.value);
         DEBUG.print_op(op);
 
         switch (op.op_code) {
             case OP_NOP:
-                this.alu_control.write(CONTROL_ALU_ADD);
-                this.alu.notify();
+                this.next_instruction();
                 break;
 
             case OP_ADD:
                 this.alu_control.write(CONTROL_ALU_ADD);
                 this.alu.notify();
+                this.next_instruction();
                 break;
 
             case OP_CMP:
                 this.alu_control.write(CONTROL_ALU_CMP);
                 this.alu.notify();
+                this.next_instruction();
                 break;
 
             case OP_HALT:
+                this.halted = false;
+                break;
+
             case OP_INV:
             case OP_JUMP:
             case OP_JUMP_IF_EQUAL:
