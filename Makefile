@@ -1,7 +1,15 @@
 
+%.js: %.es6
 
-%.js: %.ts
+%.es6: %.ts
 	@tsc -t es6 $< --module commonjs
+	mv $@ $()
+
+	# Change the following line to prevent node from blowing up.
+	# Not sure why babel does this...
+	# var __extends = undefined.__extends || function (d, b) {
+	# var __extends =  function (d, b) {
+	sed -ie 's#undefined.__extends || function#function#g' $@
 
 	@mv $@ es6_$@
 	@babel es6_$@ -o $@
