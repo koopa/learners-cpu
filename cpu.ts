@@ -8,9 +8,13 @@ const CONTROL_MEM_NOP        = 0x00;
 const CONTROL_MEM_WRITE_DATA = 0x01;
 const CONTROL_MEM_READ_DATA  = 0x02;
 
-const CONTROL_ALU_NOP  = 0x00;
-const CONTROL_ALU_ADD  = 0x01;
-const CONTROL_ALU_CMP  = 0x02;
+const CONTROL_ALU_NOP     = 0x00;
+const CONTROL_ALU_ADD     = 0x01;
+const CONTROL_ALU_CMP     = 0x02;
+const CONTROL_ALU_NAND    = 0x03;
+const CONTROL_ALU_INV     = 0x04;
+const CONTROL_ALU_SHIFT_R = 0x05;
+const CONTROL_ALU_SHIFT_L = 0x06;
 
 const OPTYPE_R0_V0     = 0x01;
 const OPTYPE_R1_V0     = 0x02;
@@ -23,14 +27,13 @@ const OP_ADD             = 0x02;
 const OP_INV             = 0x03;
 const OP_CMP             = 0x04;
 const OP_JUMP            = 0x05;
-const OP_JUMP_IF_ZERO    = 0x06;
+const OP_JUMP_IF_EQUAL    = 0x06;
 const OP_NAND            = 0x07;
 const OP_SHIFT_LEFT      = 0x08;
 const OP_SHIFT_RIGHT     = 0x09;
 const OP_LOAD            = 0x0a;
 const OP_STORE           = 0x0b;
-const OP_SET_LOWER       = 0x0c;
-const OP_SET_UPPER       = 0x0d;
+const OP_SET             = 0x0c;
 
 export class DEBUG {
     static op_to_str(op:Operation) {
@@ -57,14 +60,13 @@ export class DEBUG {
             case OP_INV             : return 'OP_INV';
             case OP_CMP             : return 'OP_CMP';
             case OP_JUMP            : return 'OP_JUMP';
-            case OP_JUMP_IF_ZERO    : return 'OP_JUMP_IF_ZERO';
+            case OP_JUMP_IF_EQUAL    : return 'OP_JUMP_IF_EQUAL';
             case OP_NAND            : return 'OP_NAND';
             case OP_SHIFT_LEFT      : return 'OP_SHIFT_LEFT';
             case OP_SHIFT_RIGHT     : return 'OP_SHIFT_RIGHT';
             case OP_LOAD            : return 'OP_LOAD';
             case OP_STORE           : return 'OP_STORE';
-            case OP_SET_LOWER       : return 'OP_SET_LOWER';
-            case OP_SET_UPPER       : return 'OP_SET_UPPER';
+            case OP_SET             : return 'OP_SET';
         }
     }
 }
@@ -167,11 +169,11 @@ export class Register extends Component {
 }
 
 export class ALU extends Component {
-    public static STATUS_OK         = 0x00;
-    public static STATUS_OVERFLOW   = 0x01;
-    public static STATUS_ZERO       = 0x02;
-    public static STATUS_CARRY      = 0x04;
-    public static STATUS_ERROR      = 0x08;
+    public static STATUS_OK       = 0x00;
+    public static STATUS_OVERFLOW = 0x01;
+    public static STATUS_EQUAL    = 0x02;
+    public static STATUS_CARRY    = 0x04;
+    public static STATUS_ERROR    = 0x08;
 
     control_bus: Wire;
     reg_op0:     Register;
@@ -191,6 +193,7 @@ export class ALU extends Component {
     }
 
     clock() {
+        var tmp: number;
         switch (this.control_bus.value) {
             case CONTROL_ALU_ADD:
                 this.output.write((this.reg_op0.value + this.reg_op1.value) & 0XFFFF);
@@ -200,9 +203,41 @@ export class ALU extends Component {
                 break;
 
             case CONTROL_ALU_CMP:
-                this.output.write(
-                    (this.reg_op0.value === this.reg_op1.value) ? 1 : 0
-                );
+                tmp = (this.reg_op0.value === this.reg_op1.value) ? 1 : 0
+
+                // The status field is used by OP_JUMP_IF_EQUAL
+                this.status = (tmp)
+                    ? ALU.STATUS_EQUAL
+                    : ALU.STATUS_OK;
+
+                this.output.write(tmp);
+                break;
+
+            case CONTROL_ALU_NAND:
+                tmp = ~(this.reg_op0.value & this.reg_op1.value) & 0XFFFF
+                this.output.write(tmp);
+                this.status = ALU.STATUS_OK;
+                break;
+
+            case CONTROL_ALU_INV:
+                tmp = ~(this.reg_op0.value) & 0XFFFF
+                this.output.write(tmp);
+                this.status = ALU.STATUS_OK;
+                break;
+            case CONTROL_ALU_SHIFT_R:
+                tmp = (this.reg_op0.value >> this.reg_op1.value) & 0XFFFF
+                this.output.write(tmp);
+                this.status = ALU.STATUS_OK;
+                break;
+
+            case CONTROL_ALU_SHIFT_L:
+                tmp = (this.reg_op0.value << this.reg_op1.value) & 0XFFFF
+                this.output.write(tmp);
+                this.status = ALU.STATUS_OK;
+                break;
+
+            case CONTROL_ALU_NOP:
+            default:
                 break;
         }
     }
@@ -270,13 +305,13 @@ export class CPU extends Component {
             case OP_INV:
             case OP_CMP:
             case OP_NAND:
+            case OP_SHIFT_LEFT:
+            case OP_SHIFT_RIGHT:
                 op_type = OPTYPE_R0_V0;
                 break;
 
             case OP_JUMP:
-            case OP_JUMP_IF_ZERO:
-            case OP_SHIFT_LEFT:
-            case OP_SHIFT_RIGHT:
+            case OP_JUMP_IF_EQUAL:
                 op_type = OPTYPE_R1_V0;
                 break;
 
@@ -285,8 +320,7 @@ export class CPU extends Component {
                 op_type = OPTYPE_R2_V0
                 break;
 
-            case OP_SET_LOWER:
-            case OP_SET_UPPER:
+            case OP_SET:
                 op_type = OPTYPE_R1_V1
                 break;
         }
@@ -360,9 +394,9 @@ export class CPU extends Component {
                 return this.fetch_instruction
                 break;
 
-            case OP_JUMP_IF_ZERO:
+            case OP_JUMP_IF_EQUAL:
                 switch (this.alu.status) {
-                    case ALU.STATUS_ZERO:
+                    case ALU.STATUS_EQUAL:
                         this.ir_control.write(CONTROL_REG_READ_DATA)
                         switch(op.reg0) {
                             case 0: this.reg0_control.write(CONTROL_REG_WRITE_DATA); break
@@ -376,26 +410,76 @@ export class CPU extends Component {
                 }
                 break;
             case OP_INV:
+                this.alu_control.write(CONTROL_ALU_INV);
+                return this.increase_pc
+                break;
+
             case OP_NAND:
+                this.alu_control.write(CONTROL_ALU_NAND);
+                return this.increase_pc
+                break;
+
             case OP_SHIFT_LEFT:
+                this.alu_control.write(CONTROL_ALU_SHIFT_L);
+                return this.increase_pc
+                break;
+
             case OP_SHIFT_RIGHT:
+                this.alu_control.write(CONTROL_ALU_SHIFT_R);
+                return this.increase_pc
+                break;
+
             case OP_LOAD:
+                this.memory_control.write(CONTROL_MEM_WRITE_DATA);
+
+                switch(op.reg0) {
+                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
+                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
+                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
+                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
+                }
+                switch(op.reg1) {
+                    case 0: this.reg0_control.write(CONTROL_REG_WRITE_ADDR); break
+                    case 1: this.reg1_control.write(CONTROL_REG_WRITE_ADDR); break
+                    case 2: this.reg2_control.write(CONTROL_REG_WRITE_ADDR); break
+                    case 3: this.reg3_control.write(CONTROL_REG_WRITE_ADDR); break
+                }
+                return this.increase_pc
+                break;
+
             case OP_STORE:
-            case OP_SET_LOWER:
-            case OP_SET_UPPER:
-                throw "Opcode not implemented";
+                this.memory_control.write(CONTROL_MEM_READ_DATA);
+                switch(op.reg0) {
+                    case 0: this.reg0_control.write(CONTROL_REG_WRITE_DATA); break
+                    case 1: this.reg1_control.write(CONTROL_REG_WRITE_DATA); break
+                    case 2: this.reg2_control.write(CONTROL_REG_WRITE_DATA); break
+                    case 3: this.reg3_control.write(CONTROL_REG_WRITE_DATA); break
+                }
+                switch(op.reg1) {
+                    case 0: this.reg0_control.write(CONTROL_REG_WRITE_ADDR); break
+                    case 1: this.reg1_control.write(CONTROL_REG_WRITE_ADDR); break
+                    case 2: this.reg2_control.write(CONTROL_REG_WRITE_ADDR); break
+                    case 3: this.reg3_control.write(CONTROL_REG_WRITE_ADDR); break
+                }
+                return this.increase_pc
+                break;
+
+            case OP_SET:
+                switch(op.reg0) {
+                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
+                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
+                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
+                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
+                }
+                this.data_bus.write(op.value)
+                break
+
         }
     }
     clock() {
         // Actually iterate the state machine
         if (typeof this.state == 'function') {
             this.state = this.state();
-
-            this.reg0.clock();
-            this.reg1.clock();
-            this.reg2.clock();
-            this.reg3.clock();
-            this.alu .clock();
 
             // Wires / Buses don't actually do anything.
             // However the clock() call does some sanity checks
@@ -409,6 +493,13 @@ export class CPU extends Component {
             this.reg3_control.clock()
             this.alu_control.clock()
             this.ir_control.clock()
+
+            this.reg0.clock();
+            this.reg1.clock();
+            this.reg2.clock();
+            this.reg3.clock();
+            this.alu .clock();
+
         }
         else {
             console.log("Halted");
@@ -423,20 +514,58 @@ export class Machine extends Component {
     memory:         Memory;
     cpu:            CPU;
 
-    constructor() {
+    io_chr_prev: number;
+
+    public static OUT_CHR_OFFSET:number = 0XFFF0;
+    public static INP_CHR_OFFSET:number = 0XFFF1;
+
+    output: Function;
+
+    constructor(output: Function) {
         super();
+
+        this.output = output;
 
         this.memory_control = new Wire(2);
         this.data_bus       = new Wire(16)
         this.addr_bus       = new Wire(16)
         this.memory         = new Memory(this.memory_control, this.addr_bus, this.data_bus, 1 << 16)
         this.cpu            = new CPU(this.memory_control, this.addr_bus, this.data_bus);
+
+        this.io_chr_prev = 0
     }
 
     clock() {
         this.cpu   .clock();
         this.memory.clock();
+
+        this.handle_io();
+
     }
+
+    is_running() {
+        return (typeof this.cpu.state === 'function')
+    }
+
+    handle_io() {
+        var last_out_chr = this.memory.storage[Machine.OUT_CHR_OFFSET]
+        // Write output if the output buffer contains a nonzero value that differs from last time.
+        // This means if the program wants to output the same character twice, it needs to zero
+        // the output buffer inbetween.
+        // An output routine should therefore always write a character, then zero the buffer again.
+        if (this.io_chr_prev != last_out_chr && last_out_chr != 0) {
+            this.output(String.fromCharCode(last_out_chr))
+        }
+    }
+
+    input(character: String) {
+        // Input debouncing is a task left to the program. It is suggested to use the
+        // same procedure as we're using when checking whether to output something.
+        // i.E. read the value and zero it afterwards, so that you can detect if a
+        // character is input again.
+        this.memory.storage[Machine.INP_CHR_OFFSET] = character.charCodeAt(0)
+    }
+
 
     dumpstate() {
         console.log(`Machine state: IR    = ${this.cpu.instruction.value}`)
@@ -447,5 +576,14 @@ export class Machine extends Component {
         console.log(`       ALU status    = ${this.cpu.alu.status}`)
         console.log(`         Data Bus    = ${this.data_bus.value}`)
         console.log(`         Addr Bus    = ${this.addr_bus.value}`)
+    }
+
+    load_program(offset, program: number[]) {
+        count = 0
+        for (var op of program) {
+            this.memory.storage[offset+count] = op
+            count++
+        }
+        console.log(`Loaded program of length ${count} at offset ${offset}`)
     }
 }
