@@ -27,13 +27,14 @@ const OP_ADD             = 0x02;
 const OP_INV             = 0x03;
 const OP_CMP             = 0x04;
 const OP_JUMP            = 0x05;
-const OP_JUMP_IF_EQUAL    = 0x06;
+const OP_JUMP_IF_EQUAL   = 0x06;
 const OP_NAND            = 0x07;
 const OP_SHIFT_LEFT      = 0x08;
 const OP_SHIFT_RIGHT     = 0x09;
 const OP_LOAD            = 0x0a;
 const OP_STORE           = 0x0b;
-const OP_SET             = 0x0c;
+const OP_MOVE            = 0x0c;
+const OP_SET             = 0x0d;
 
 export class DEBUG {
     static op_to_str(op:Operation) {
@@ -48,7 +49,7 @@ export class DEBUG {
                 return(DEBUG.op_name(op.op_code) + ' R' +  op.reg0 + ' R' +  op.reg1);
                 break;
             case OPTYPE_R1_V1:
-                return(DEBUG.op_name(op.op_code) + ' R' +  op.reg0 + ' V' +  op.value);
+                return(DEBUG.op_name(op.op_code) + ' R' +  op.reg0 + ' 0x' +  op.value.toString(16));
                 break;
         }
     }
@@ -66,6 +67,7 @@ export class DEBUG {
             case OP_SHIFT_RIGHT     : return 'OP_SHIFT_RIGHT';
             case OP_LOAD            : return 'OP_LOAD';
             case OP_STORE           : return 'OP_STORE';
+            case OP_MOVE            : return 'OP_MOVE';
             case OP_SET             : return 'OP_SET';
         }
     }
@@ -73,7 +75,8 @@ export class DEBUG {
 
 export class Component {
 
-    clock() {}
+    clock_up()   { throw "Component didn't implement clock_up()"}
+    clock_down() { throw "Component didn't implement clock_down()"}
 }
 
 
@@ -105,7 +108,9 @@ export class Wire extends Component {
         this.write_count++;
         this.value = value;
     }
-    clock() {
+
+    clock_up(){}
+    clock_down() {
         // No action - just sanity check
         if (this.write_count > 1) {
             throw `Multiple writes to ${this.identifier} during single clock cycle, check CPU`;
@@ -133,6 +138,37 @@ export class Memory extends Component {
         }
     }
 
+    clock_up() {
+        var tmp:number;
+        switch (this.control_bus.value) {
+            case CONTROL_MEM_WRITE_DATA:
+                tmp = this.storage[this.addr_bus.value]
+                this.data_bus.write(tmp);
+
+                console.log(`Memory: WRITE TO DATA BUS: ${tmp.toString(16)}`)
+                break;
+            case CONTROL_MEM_READ_DATA:
+            case CONTROL_MEM_NOP:
+            default:
+                break;
+        }
+    }
+    clock_down() {
+        var tmp:number;
+        switch (this.control_bus.value) {
+            case CONTROL_MEM_READ_DATA:
+                tmp = this.data_bus.value
+                this.storage[this.addr_bus.value] = tmp
+                console.log(`Memory: READ FROM DATA BUS: ${tmp.toString(16)}`)
+                break;
+            case CONTROL_MEM_WRITE_DATA:
+            case CONTROL_MEM_NOP:
+            default:
+                break;
+        }
+    }
+
+
 }
 
 export class Register extends Component {
@@ -140,29 +176,44 @@ export class Register extends Component {
     addr_bus:    Wire;
     control_bus: Wire;
     data_bus:    Wire;
+    identifier:  String;
 
-    constructor(control:Wire, addr_bus: Wire, data_bus: Wire) {
+    constructor(control:Wire, addr_bus: Wire, data_bus: Wire, identifier='') {
         super();
         this.control_bus = control;
         this.addr_bus    = addr_bus;
         this.data_bus    = data_bus;
-        this.value       = 0
+        this.value       = 0;
+        this.identifier  = identifier;
     }
-    clock() {
+    clock_up() {
         switch (this.control_bus.value) {
-            case CONTROL_REG_NOP:
-                break;
             case CONTROL_REG_WRITE_DATA:
+                console.log(`Reg ${this.identifier}: WRITE TO DATA BUS: ${this.value.toString(16)}`)
                 this.data_bus.write(this.value);
                 break;
-            case CONTROL_REG_READ_DATA:
-                this.value = this.data_bus.value
-                break;
             case CONTROL_REG_WRITE_ADDR:
+                console.log(`Reg ${this.identifier}: WRITE TO ADDR BUS: ${this.value.toString(16)}`)
                 this.addr_bus.write(this.value);
                 break;
             case CONTROL_REG_INCREASE:
                 this.value += 1;
+                console.log(`Reg ${this.identifier}: INCREASE: ${this.value.toString(16)}`)
+                break;
+            default:
+            case CONTROL_REG_READ_DATA:
+            case CONTROL_REG_NOP:
+                break;
+        }
+    }
+    clock_down() {
+        switch (this.control_bus.value) {
+            case CONTROL_REG_READ_DATA:
+                this.value = this.data_bus.value
+                console.log(`Reg ${this.identifier}: READ FROM DATA BUS: ${this.value.toString(16)}`)
+                break;
+            case CONTROL_REG_NOP:
+            default:
                 break;
         }
     }
@@ -192,7 +243,7 @@ export class ALU extends Component {
         this.status      = 0x00;
     }
 
-    clock() {
+    clock_up() {
         var tmp: number;
         switch (this.control_bus.value) {
             case CONTROL_ALU_ADD:
@@ -232,6 +283,7 @@ export class ALU extends Component {
 
             case CONTROL_ALU_SHIFT_L:
                 tmp = (this.reg_op0.value << this.reg_op1.value) & 0XFFFF
+                console.log(`ALU: SHIFT L ${this.reg_op0.value.toString(16)} ${this.reg_op1.value.toString(16)} = ${tmp.toString(16)}`)
                 this.output.write(tmp);
                 this.status = ALU.STATUS_OK;
                 break;
@@ -241,6 +293,7 @@ export class ALU extends Component {
                 break;
         }
     }
+    clock_down() { }
 }
 
 export class CPU extends Component {
@@ -248,6 +301,7 @@ export class CPU extends Component {
     memory_control: Wire;
     data_bus:       Wire;
 
+    pc_control:     Wire;
     reg0_control:   Wire;
     reg1_control:   Wire;
     reg2_control:   Wire;
@@ -259,6 +313,7 @@ export class CPU extends Component {
     alu:    ALU;
 
     instruction: Register;
+    pc:          Register;
     reg0:        Register;
     reg1:        Register;
     reg2:        Register;
@@ -273,6 +328,7 @@ export class CPU extends Component {
         this.data_bus       = data_bus;
         this.memory_control = memory_control;
 
+        this.pc_control     = new Wire(3, 'pc_control');
         this.reg0_control   = new Wire(3, 'reg0_control');
         this.reg1_control   = new Wire(3, 'reg1_control');
         this.reg2_control   = new Wire(3, 'reg2_control');
@@ -282,34 +338,43 @@ export class CPU extends Component {
 
         this.alu_control    = new Wire(4, 'alu_control');
 
-        this.reg0 = new Register(this.reg0_control, this.addr_bus, this.data_bus);
-        this.reg1 = new Register(this.reg1_control, this.addr_bus, this.data_bus);
-        this.reg2 = new Register(this.reg2_control, this.addr_bus, this.data_bus);
-        this.reg3 = new Register(this.reg3_control, this.addr_bus, this.data_bus);
+        this.pc = new Register(this.pc_control, this.addr_bus, this.data_bus, 'PC');
+
+        this.reg0 = new Register(this.reg0_control, this.addr_bus, this.data_bus, 'REG0');
+        this.reg1 = new Register(this.reg1_control, this.addr_bus, this.data_bus, 'REG1');
+        this.reg2 = new Register(this.reg2_control, this.addr_bus, this.data_bus, 'REG2');
+        this.reg3 = new Register(this.reg3_control, this.addr_bus, this.data_bus, 'REG3');
 
 
-        this.alu         = new ALU(this.alu_control, this.reg1, this.reg2, this.data_bus);
-        this.instruction = new Register(this.ir_control, this.addr_bus, this.data_bus);
+        this.alu         = new ALU(this.alu_control, this.reg0, this.reg1, this.data_bus);
+        this.instruction = new Register(this.ir_control, this.addr_bus, this.data_bus, 'IR');
+
+        // Initial instruction: Jump to memory location 0
+        //this.instruction.value = OP_JUMP << 12;
 
 
         this.state = this.fetch_instruction.bind(this)
     }
 
     decode(instr: number): Operation {
-        var op = (instr & 0xf000) >> 12;
+        var op    = (instr >> 12) & 0x0f;
+        var reg0  = (instr >>  8) & 0x0f;
+        var reg1  = (instr >>  4) & 0x0f;
+        var value = (instr      ) & 0xff;
+
         var op_type = 0;
         switch (op) {
             case OP_NOP:
             case OP_HALT:
-            case OP_ADD:
-            case OP_INV:
             case OP_CMP:
-            case OP_NAND:
-            case OP_SHIFT_LEFT:
-            case OP_SHIFT_RIGHT:
                 op_type = OPTYPE_R0_V0;
                 break;
 
+            case OP_ADD:
+            case OP_INV:
+            case OP_NAND:
+            case OP_SHIFT_LEFT:
+            case OP_SHIFT_RIGHT:
             case OP_JUMP:
             case OP_JUMP_IF_EQUAL:
                 op_type = OPTYPE_R1_V0;
@@ -317,6 +382,7 @@ export class CPU extends Component {
 
             case OP_LOAD:
             case OP_STORE:
+            case OP_MOVE:
                 op_type = OPTYPE_R2_V0
                 break;
 
@@ -325,9 +391,6 @@ export class CPU extends Component {
                 break;
         }
 
-        var reg0  = (instr & 0x0f00) >> 8;
-        var reg1  = (instr & 0x0700) >> 8;
-        var value = (instr & 0x00ff);
 
         return {
             op_code: op,
@@ -339,29 +402,42 @@ export class CPU extends Component {
     }
 
     fetch_instruction() {
+        console.log('-- fetch_instruction')
         // Reset all controls for the next clock cycle
-        this.memory_control .write(CONTROL_MEM_NOP)
 
+        this.reg0_control   .write(CONTROL_REG_NOP)
         this.reg1_control   .write(CONTROL_REG_NOP)
         this.reg2_control   .write(CONTROL_REG_NOP)
         this.reg3_control   .write(CONTROL_REG_NOP)
         this.alu_control    .write(CONTROL_ALU_NOP)
 
-        this.ir_control  .write(CONTROL_REG_READ_DATA);
-        this.reg0_control.write(CONTROL_REG_WRITE_ADDR);
+        // put value that pc points to into ir
+        this.memory_control .write(CONTROL_MEM_WRITE_DATA)
+        this.ir_control     .write(CONTROL_REG_READ_DATA);
+        this.pc_control     .write(CONTROL_REG_WRITE_ADDR);
 
         return this.run_instruction;
     }
 
     increase_pc() {
-        this.reg0_control.write(CONTROL_REG_INCREASE);
+        console.log('-- increase_pc')
+        this.pc_control.write(CONTROL_REG_INCREASE);
         return this.fetch_instruction;
     }
 
     run_instruction() {
+        console.log('-- run_instruction')
 
         var op = this.decode(this.instruction.value);
         console.log(DEBUG.op_to_str(op))
+
+        this.pc_control.write(CONTROL_REG_NOP)
+        this.ir_control.write(CONTROL_REG_NOP)
+
+        this.reg0_control.write(CONTROL_REG_NOP)
+        this.reg1_control.write(CONTROL_REG_NOP)
+        this.reg2_control.write(CONTROL_REG_NOP)
+        this.reg3_control.write(CONTROL_REG_NOP)
 
         switch (op.op_code) {
             case OP_NOP:
@@ -369,6 +445,12 @@ export class CPU extends Component {
                 break
 
             case OP_ADD:
+                switch(op.reg0) {
+                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
+                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
+                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
+                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
+                }
                 this.alu_control.write(CONTROL_ALU_ADD);
                 return this.increase_pc
                 break;
@@ -384,7 +466,7 @@ export class CPU extends Component {
                 break;
 
             case OP_JUMP:
-                this.ir_control.write(CONTROL_REG_READ_DATA)
+                this.pc_control.write(CONTROL_REG_READ_DATA)
                 switch(op.reg0) {
                     case 0: this.reg0_control.write(CONTROL_REG_WRITE_DATA); break
                     case 1: this.reg1_control.write(CONTROL_REG_WRITE_DATA); break
@@ -397,7 +479,7 @@ export class CPU extends Component {
             case OP_JUMP_IF_EQUAL:
                 switch (this.alu.status) {
                     case ALU.STATUS_EQUAL:
-                        this.ir_control.write(CONTROL_REG_READ_DATA)
+                        this.pc_control.write(CONTROL_REG_READ_DATA)
                         switch(op.reg0) {
                             case 0: this.reg0_control.write(CONTROL_REG_WRITE_DATA); break
                             case 1: this.reg1_control.write(CONTROL_REG_WRITE_DATA); break
@@ -410,21 +492,45 @@ export class CPU extends Component {
                 }
                 break;
             case OP_INV:
+                switch(op.reg0) {
+                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
+                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
+                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
+                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
+                }
                 this.alu_control.write(CONTROL_ALU_INV);
                 return this.increase_pc
                 break;
 
             case OP_NAND:
+                switch(op.reg0) {
+                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
+                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
+                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
+                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
+                }
                 this.alu_control.write(CONTROL_ALU_NAND);
                 return this.increase_pc
                 break;
 
             case OP_SHIFT_LEFT:
+                switch(op.reg0) {
+                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
+                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
+                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
+                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
+                }
                 this.alu_control.write(CONTROL_ALU_SHIFT_L);
                 return this.increase_pc
                 break;
 
             case OP_SHIFT_RIGHT:
+                switch(op.reg0) {
+                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
+                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
+                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
+                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
+                }
                 this.alu_control.write(CONTROL_ALU_SHIFT_R);
                 return this.increase_pc
                 break;
@@ -472,38 +578,60 @@ export class CPU extends Component {
                     case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
                 }
                 this.data_bus.write(op.value)
+                return this.increase_pc
+                break
+
+            case OP_MOVE:
+                switch(op.reg0) {
+                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
+                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
+                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
+                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
+                }
+                switch(op.reg1) {
+                    case 0: this.reg0_control.write(CONTROL_REG_WRITE_DATA); break
+                    case 1: this.reg1_control.write(CONTROL_REG_WRITE_DATA); break
+                    case 2: this.reg2_control.write(CONTROL_REG_WRITE_DATA); break
+                    case 3: this.reg3_control.write(CONTROL_REG_WRITE_DATA); break
+                }
+                return this.increase_pc
                 break
 
         }
     }
-    clock() {
-        // Actually iterate the state machine
-        if (typeof this.state == 'function') {
-            this.state = this.state();
+    clock_up() {
+        if (typeof this.state != 'function') { console.log("Halted"); return }
 
-            // Wires / Buses don't actually do anything.
-            // However the clock() call does some sanity checks
-            this.addr_bus.clock()
-            this.memory_control.clock()
-            this.data_bus.clock()
+        this.instruction .clock_up();
 
-            this.reg0_control.clock()
-            this.reg1_control.clock()
-            this.reg2_control.clock()
-            this.reg3_control.clock()
-            this.alu_control.clock()
-            this.ir_control.clock()
+        this.state = this.state();
 
-            this.reg0.clock();
-            this.reg1.clock();
-            this.reg2.clock();
-            this.reg3.clock();
-            this.alu .clock();
+        this.reg0        .clock_up();
+        this.reg1        .clock_up();
+        this.reg2        .clock_up();
+        this.reg3        .clock_up();
 
-        }
-        else {
-            console.log("Halted");
-        }
+        this.pc          .clock_up();
+
+        // ALU last - it needs the written values from the registers
+        this.alu         .clock_up();
+
+    }
+    clock_down() {
+        if (typeof this.state != 'function') { console.log("Halted");  return}
+
+        this.instruction .clock_down();
+
+        // ALU first here, as registers may read from it
+        this.alu         .clock_down();
+
+        this.reg0        .clock_down();
+        this.reg1        .clock_down();
+        this.reg2        .clock_down();
+        this.reg3        .clock_down();
+        this.pc          .clock_down();
+
+        this.memory_control.write(CONTROL_MEM_NOP)
     }
 }
 
@@ -535,13 +663,21 @@ export class Machine extends Component {
         this.io_chr_prev = 0
     }
 
-    clock() {
-        this.cpu   .clock();
-        this.memory.clock();
+    clock_up() {
+        console.log("####################### Machine clock cycle up ############")
+        this.cpu   .clock_up();
+        this.memory.clock_up();
 
         this.handle_io();
-
     }
+    clock_down() {
+        console.log("####################### Machine clock cycle down ##########")
+        this.cpu   .clock_down();
+        this.memory.clock_down();
+
+        this.handle_io();
+    }
+
 
     is_running() {
         return (typeof this.cpu.state === 'function')
@@ -579,7 +715,7 @@ export class Machine extends Component {
     }
 
     load_program(offset, program: number[]) {
-        count = 0
+        var count = 0
         for (var op of program) {
             this.memory.storage[offset+count] = op
             count++
