@@ -1,5 +1,18 @@
 import cpu = require('./cpu');
 
-var teh_cpu = new cpu.CPU();
+var machine = new cpu.Machine();
 
-teh_cpu.clock();
+machine.clock(); // fetch_instruction
+machine.clock(); // run_instruction
+machine.clock(); // increase_pc
+
+machine.clock(); // fetch_instruction
+machine.clock(); // run_instruction
+machine.clock(); // increase_pc
+
+machine.clock(); // fetch_instruction
+machine.clock(); // run_instruction
+machine.clock(); // increase_pc
+
+machine.clock(); // fetch_instruction
+machine.dumpstate();
