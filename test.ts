@@ -2,7 +2,6 @@ import cpu       = require('./cpu');
 import assembler = require('./assembler');
 
 
-var machine = new cpu.Machine(console.log);
 
 var program = [
 
@@ -65,6 +64,7 @@ var program = [
 
 ]
 
+var machine = new cpu.Machine(function(data){console.log(data)});
 machine.load_program(0, program)
 
 for (var op of machine.memory.storage.slice(0, program.length)) {
@@ -72,7 +72,6 @@ for (var op of machine.memory.storage.slice(0, program.length)) {
 }
 
 while(machine.is_running()) {
-    machine.clock_up();
-    machine.clock_down();
+    machine.update();
 }
 machine.dumpstate();

@@ -36,6 +36,7 @@ const OP_STORE           = 0x0b;
 const OP_MOVE            = 0x0c;
 const OP_SET             = 0x0d;
 
+
 export class DEBUG {
     static op_to_str(op:Operation) {
         switch(op.op_type) {
@@ -74,9 +75,32 @@ export class DEBUG {
 }
 
 export class Component {
+    simulation:     Simulation;
+    identifier:     string;
 
-    clock_up()   { throw "Component didn't implement clock_up()"}
-    clock_down() { throw "Component didn't implement clock_down()"}
+    update()   { throw "Component didn't implement update()"}
+
+    constructor(simulation: Simulation, identifier='') {
+        this.simulation = simulation
+        this.identifier = identifier
+    }
+}
+
+export class Simulation {
+    queue: Component[]
+
+    constructor() {
+        this.queue = []
+    }
+
+    notify(c: Component) {
+        this.queue.push(c)
+    }
+
+    handle_next() {
+        var c = this.queue.pop()
+        c.update()
+    }
 }
 
 
@@ -95,10 +119,9 @@ export class Wire extends Component {
     width:       number;
     value:       number;
     write_count: number;
-    identifier:  string;
 
-    constructor(width:number, identifier='') {
-        super()
+    constructor(width:number, simulation:Simulation, identifier='') {
+        super(simulation)
         this.width = width;
         this.value = 0;
         this.identifier = identifier;
@@ -109,8 +132,7 @@ export class Wire extends Component {
         this.value = value;
     }
 
-    clock_up(){}
-    clock_down() {
+    update() {
         // No action - just sanity check
         if (this.write_count > 1) {
             throw `Multiple writes to ${this.identifier} during single clock cycle, check CPU`;
@@ -126,8 +148,8 @@ export class Memory extends Component {
     control_bus: Wire;
     data_bus:    Wire;
 
-    constructor(control:Wire, addr_bus: Wire, data_bus: Wire, size:number) {
-        super();
+    constructor(control:Wire, addr_bus: Wire, data_bus: Wire, size:number, simulation:Simulation) {
+        super(simulation);
         this.control_bus = control;
         this.addr_bus    = addr_bus;
         this.data_bus    = data_bus;
@@ -138,37 +160,25 @@ export class Memory extends Component {
         }
     }
 
-    clock_up() {
+    update() {
         var tmp:number;
         switch (this.control_bus.value) {
             case CONTROL_MEM_WRITE_DATA:
                 tmp = this.storage[this.addr_bus.value]
                 this.data_bus.write(tmp);
 
-                console.log(`Memory: WRITE TO DATA BUS: ${tmp.toString(16)}`)
+                //console.log(`Memory: WRITE TO DATA BUS: ${tmp.toString(16)}`)
                 break;
-            case CONTROL_MEM_READ_DATA:
-            case CONTROL_MEM_NOP:
-            default:
-                break;
-        }
-    }
-    clock_down() {
-        var tmp:number;
-        switch (this.control_bus.value) {
             case CONTROL_MEM_READ_DATA:
                 tmp = this.data_bus.value
                 this.storage[this.addr_bus.value] = tmp
-                console.log(`Memory: READ FROM DATA BUS: ${tmp.toString(16)}`)
+                //console.log(`Memory: READ FROM DATA BUS: ${tmp.toString(16)}`)
                 break;
-            case CONTROL_MEM_WRITE_DATA:
             case CONTROL_MEM_NOP:
             default:
                 break;
         }
     }
-
-
 }
 
 export class Register extends Component {
@@ -176,44 +186,37 @@ export class Register extends Component {
     addr_bus:    Wire;
     control_bus: Wire;
     data_bus:    Wire;
-    identifier:  String;
 
-    constructor(control:Wire, addr_bus: Wire, data_bus: Wire, identifier='') {
-        super();
+    constructor(control:Wire, addr_bus: Wire, data_bus: Wire,simulation:Simulation, identifier='') {
+        super(simulation, identifier);
         this.control_bus = control;
         this.addr_bus    = addr_bus;
         this.data_bus    = data_bus;
         this.value       = 0;
-        this.identifier  = identifier;
     }
-    clock_up() {
+    update() {
         switch (this.control_bus.value) {
             case CONTROL_REG_WRITE_DATA:
-                console.log(`Reg ${this.identifier}: WRITE TO DATA BUS: ${this.value.toString(16)}`)
+                //console.log(`Reg ${this.identifier}: WRITE TO DATA BUS: ${this.value.toString(16)}`)
                 this.data_bus.write(this.value);
+                this.simulation.notify(this.data_bus)
                 break;
             case CONTROL_REG_WRITE_ADDR:
-                console.log(`Reg ${this.identifier}: WRITE TO ADDR BUS: ${this.value.toString(16)}`)
+                //console.log(`Reg ${this.identifier}: WRITE TO ADDR BUS: ${this.value.toString(16)}`)
                 this.addr_bus.write(this.value);
+                this.simulation.notify(this.addr_bus)
                 break;
             case CONTROL_REG_INCREASE:
                 this.value += 1;
-                console.log(`Reg ${this.identifier}: INCREASE: ${this.value.toString(16)}`)
+                //console.log(`Reg ${this.identifier}: INCREASE: ${this.value.toString(16)}`)
                 break;
             default:
-            case CONTROL_REG_READ_DATA:
-            case CONTROL_REG_NOP:
-                break;
-        }
-    }
-    clock_down() {
-        switch (this.control_bus.value) {
             case CONTROL_REG_READ_DATA:
                 this.value = this.data_bus.value
-                console.log(`Reg ${this.identifier}: READ FROM DATA BUS: ${this.value.toString(16)}`)
+                this.simulation.notify(this.data_bus)
+                //console.log(`Reg ${this.identifier}: READ FROM DATA BUS: ${this.value.toString(16)}`)
                 break;
             case CONTROL_REG_NOP:
-            default:
                 break;
         }
     }
@@ -232,8 +235,8 @@ export class ALU extends Component {
     output:      Wire;
     status:      number;
 
-    constructor(control:Wire, reg_op0:Register, reg_op1:Register, output:Wire) {
-        super();
+    constructor(control:Wire, reg_op0:Register, reg_op1:Register, output:Wire, simulation:Simulation) {
+        super(simulation);
 
         this.control_bus = control;
         this.reg_op0     = reg_op0;
@@ -243,7 +246,7 @@ export class ALU extends Component {
         this.status      = 0x00;
     }
 
-    clock_up() {
+    update() {
         var tmp: number;
         switch (this.control_bus.value) {
             case CONTROL_ALU_ADD:
@@ -251,6 +254,7 @@ export class ALU extends Component {
                 this.status = (this.reg_op0.value + this.reg_op1.value > 0xffff)
                      ? ALU.STATUS_CARRY
                      : ALU.STATUS_OK;
+                this.simulation.notify(this.output)
                 break;
 
             case CONTROL_ALU_CMP:
@@ -262,29 +266,34 @@ export class ALU extends Component {
                     : ALU.STATUS_OK;
 
                 this.output.write(tmp);
+                this.simulation.notify(this.output)
                 break;
 
             case CONTROL_ALU_NAND:
                 tmp = ~(this.reg_op0.value & this.reg_op1.value) & 0XFFFF
                 this.output.write(tmp);
+                this.simulation.notify(this.output)
                 this.status = ALU.STATUS_OK;
                 break;
 
             case CONTROL_ALU_INV:
                 tmp = ~(this.reg_op0.value) & 0XFFFF
                 this.output.write(tmp);
+                this.simulation.notify(this.output)
                 this.status = ALU.STATUS_OK;
                 break;
             case CONTROL_ALU_SHIFT_R:
                 tmp = (this.reg_op0.value >> this.reg_op1.value) & 0XFFFF
                 this.output.write(tmp);
+                this.simulation.notify(this.output)
                 this.status = ALU.STATUS_OK;
                 break;
 
             case CONTROL_ALU_SHIFT_L:
                 tmp = (this.reg_op0.value << this.reg_op1.value) & 0XFFFF
-                console.log(`ALU: SHIFT L ${this.reg_op0.value.toString(16)} ${this.reg_op1.value.toString(16)} = ${tmp.toString(16)}`)
+                //console.log(`ALU: SHIFT L ${this.reg_op0.value.toString(16)} ${this.reg_op1.value.toString(16)} = ${tmp.toString(16)}`)
                 this.output.write(tmp);
+                this.simulation.notify(this.output)
                 this.status = ALU.STATUS_OK;
                 break;
 
@@ -293,7 +302,6 @@ export class ALU extends Component {
                 break;
         }
     }
-    clock_down() { }
 }
 
 export class CPU extends Component {
@@ -321,33 +329,33 @@ export class CPU extends Component {
 
     state:       Function;
 
-    constructor(memory_control: Wire, addr_bus: Wire, data_bus: Wire) {
-        super();
+    constructor(memory_control: Wire, addr_bus: Wire, data_bus: Wire, simulation:Simulation) {
+        super(simulation);
 
         this.addr_bus       = addr_bus;
         this.data_bus       = data_bus;
         this.memory_control = memory_control;
 
-        this.pc_control     = new Wire(3, 'pc_control');
-        this.reg0_control   = new Wire(3, 'reg0_control');
-        this.reg1_control   = new Wire(3, 'reg1_control');
-        this.reg2_control   = new Wire(3, 'reg2_control');
-        this.reg3_control   = new Wire(3, 'reg3_control');
+        this.pc_control     = new Wire(3, simulation, 'pc_control');
+        this.reg0_control   = new Wire(3, simulation, 'reg0_control');
+        this.reg1_control   = new Wire(3, simulation, 'reg1_control');
+        this.reg2_control   = new Wire(3, simulation, 'reg2_control');
+        this.reg3_control   = new Wire(3, simulation, 'reg3_control');
 
-        this.ir_control     = new Wire(3, 'ir_control');
+        this.ir_control     = new Wire(3, simulation, 'ir_control');
 
-        this.alu_control    = new Wire(4, 'alu_control');
+        this.alu_control    = new Wire(4, simulation, 'alu_control');
 
-        this.pc = new Register(this.pc_control, this.addr_bus, this.data_bus, 'PC');
+        this.pc = new Register(this.pc_control, this.addr_bus, this.data_bus, simulation, 'PC');
 
-        this.reg0 = new Register(this.reg0_control, this.addr_bus, this.data_bus, 'REG0');
-        this.reg1 = new Register(this.reg1_control, this.addr_bus, this.data_bus, 'REG1');
-        this.reg2 = new Register(this.reg2_control, this.addr_bus, this.data_bus, 'REG2');
-        this.reg3 = new Register(this.reg3_control, this.addr_bus, this.data_bus, 'REG3');
+        this.reg0 = new Register(this.reg0_control, this.addr_bus, this.data_bus, simulation, 'REG0');
+        this.reg1 = new Register(this.reg1_control, this.addr_bus, this.data_bus, simulation, 'REG1');
+        this.reg2 = new Register(this.reg2_control, this.addr_bus, this.data_bus, simulation, 'REG2');
+        this.reg3 = new Register(this.reg3_control, this.addr_bus, this.data_bus, simulation, 'REG3');
 
 
-        this.alu         = new ALU(this.alu_control, this.reg0, this.reg1, this.data_bus);
-        this.instruction = new Register(this.ir_control, this.addr_bus, this.data_bus, 'IR');
+        this.alu         = new ALU(this.alu_control, this.reg0, this.reg1, this.data_bus, simulation);
+        this.instruction = new Register(this.ir_control, this.addr_bus, this.data_bus, simulation, 'IR');
 
         // Initial instruction: Jump to memory location 0
         //this.instruction.value = OP_JUMP << 12;
@@ -402,7 +410,7 @@ export class CPU extends Component {
     }
 
     fetch_instruction() {
-        console.log('-- fetch_instruction')
+        //console.log('-- fetch_instruction')
         // Reset all controls for the next clock cycle
 
         this.reg0_control   .write(CONTROL_REG_NOP)
@@ -420,16 +428,16 @@ export class CPU extends Component {
     }
 
     increase_pc() {
-        console.log('-- increase_pc')
+        //console.log('-- increase_pc')
         this.pc_control.write(CONTROL_REG_INCREASE);
         return this.fetch_instruction;
     }
 
     run_instruction() {
-        console.log('-- run_instruction')
+        //console.log('-- run_instruction')
 
         var op = this.decode(this.instruction.value);
-        console.log(DEBUG.op_to_str(op))
+        //console.log(DEBUG.op_to_str(op))
 
         this.pc_control.write(CONTROL_REG_NOP)
         this.ir_control.write(CONTROL_REG_NOP)
@@ -599,43 +607,29 @@ export class CPU extends Component {
 
         }
     }
-    clock_up() {
+    update() {
         if (typeof this.state != 'function') { console.log("Halted"); return }
 
-        this.instruction .clock_up();
+        this.instruction .update();
 
         this.state = this.state();
 
-        this.reg0        .clock_up();
-        this.reg1        .clock_up();
-        this.reg2        .clock_up();
-        this.reg3        .clock_up();
+        this.reg0        .update();
+        this.reg1        .update();
+        this.reg2        .update();
+        this.reg3        .update();
 
-        this.pc          .clock_up();
+        this.pc          .update();
 
         // ALU last - it needs the written values from the registers
-        this.alu         .clock_up();
+        this.alu         .update();
 
-    }
-    clock_down() {
-        if (typeof this.state != 'function') { console.log("Halted");  return}
-
-        this.instruction .clock_down();
-
-        // ALU first here, as registers may read from it
-        this.alu         .clock_down();
-
-        this.reg0        .clock_down();
-        this.reg1        .clock_down();
-        this.reg2        .clock_down();
-        this.reg3        .clock_down();
-        this.pc          .clock_down();
-
-        this.memory_control.write(CONTROL_MEM_NOP)
     }
 }
 
 export class Machine extends Component {
+    simulation:     Simulation;
+
     addr_bus:       Wire;
     memory_control: Wire;
     data_bus:       Wire;
@@ -650,30 +644,23 @@ export class Machine extends Component {
     output: Function;
 
     constructor(output: Function) {
-        super();
+        super(new Simulation());
 
         this.output = output;
 
-        this.memory_control = new Wire(2);
-        this.data_bus       = new Wire(16)
-        this.addr_bus       = new Wire(16)
-        this.memory         = new Memory(this.memory_control, this.addr_bus, this.data_bus, 1 << 16)
-        this.cpu            = new CPU(this.memory_control, this.addr_bus, this.data_bus);
+        this.memory_control = new Wire( 2, this.simulation);
+        this.data_bus       = new Wire(16, this.simulation)
+        this.addr_bus       = new Wire(16, this.simulation)
+        this.memory         = new Memory(this.memory_control, this.addr_bus, this.data_bus, 1 << 16, this.simulation)
+        this.cpu            = new CPU(this.memory_control, this.addr_bus, this.data_bus, this.simulation);
 
         this.io_chr_prev = 0
     }
 
-    clock_up() {
-        console.log("####################### Machine clock cycle up ############")
-        this.cpu   .clock_up();
-        this.memory.clock_up();
-
-        this.handle_io();
-    }
-    clock_down() {
-        console.log("####################### Machine clock cycle down ##########")
-        this.cpu   .clock_down();
-        this.memory.clock_down();
+    update() {
+        //console.log("####################### Machine clock cycle up ############")
+        this.cpu   .update();
+        this.memory.update();
 
         this.handle_io();
     }
@@ -692,6 +679,7 @@ export class Machine extends Component {
         if (this.io_chr_prev != last_out_chr && last_out_chr != 0) {
             this.output(String.fromCharCode(last_out_chr))
         }
+        this.io_chr_prev = last_out_chr
     }
 
     input(character: String) {
@@ -704,14 +692,15 @@ export class Machine extends Component {
 
 
     dumpstate() {
-        console.log(`Machine state: IR    = ${this.cpu.instruction.value}`)
-        console.log(`               R0/PC = ${this.cpu.reg0.value}`)
-        console.log(`               R1    = ${this.cpu.reg1.value}`)
-        console.log(`               R2    = ${this.cpu.reg2.value}`)
-        console.log(`               R3    = ${this.cpu.reg3.value}`)
+        console.log(`Machine state: IR    = ${this.cpu.instruction.value.toString(16)}`)
+        console.log(`               PC    = ${this.cpu.pc.value.toString(16)}`)
+        console.log(`               R0    = ${this.cpu.reg0.value.toString(16)}`)
+        console.log(`               R1    = ${this.cpu.reg1.value.toString(16)}`)
+        console.log(`               R2    = ${this.cpu.reg2.value.toString(16)}`)
+        console.log(`               R3    = ${this.cpu.reg3.value.toString(16)}`)
         console.log(`       ALU status    = ${this.cpu.alu.status}`)
-        console.log(`         Data Bus    = ${this.data_bus.value}`)
-        console.log(`         Addr Bus    = ${this.addr_bus.value}`)
+        console.log(`         Data Bus    = ${this.data_bus.value.toString(16)}`)
+        console.log(`         Addr Bus    = ${this.addr_bus.value.toString(16)}`)
     }
 
     load_program(offset, program: number[]) {
