@@ -368,55 +368,51 @@ export class ALU extends Component {
 }
 
 export class CPU extends Component {
+
+    // NUM_REGISTERS may be at max 0x10 as there are 4 bits of
+    // register identification available in the instruction set.
+    public static NUM_REGISTERS:number = 0x8;
+
     addr_bus:       Wire;
     memory_control: Wire;
     data_bus:       Wire;
 
+    reg_control:    Wire[];
+    reg:            Register[];
+
     pc_control:     Wire;
-    reg0_control:   Wire;
-    reg1_control:   Wire;
-    reg2_control:   Wire;
-    reg3_control:   Wire;
 
     alu_control:    Wire;
     ir_control:     Wire;
 
-    alu:    ALU;
+    alu:            ALU;
 
-    instruction: Register;
-    pc:          Register;
-    reg0:        Register;
-    reg1:        Register;
-    reg2:        Register;
-    reg3:        Register;
+    instruction:    Register;
+    pc:             Register;
 
-    state:       Function;
+    state:          Function;
 
     constructor(memory_control: Wire, addr_bus: Wire, data_bus: Wire, simulation:Simulation) {
         super(simulation, 'Controller');
+
+        this.reg_control = [];
+        this.reg         = [];
 
         this.addr_bus       = addr_bus;
         this.data_bus       = data_bus;
         this.memory_control = memory_control;
 
         this.pc_control     = new Wire(3, simulation, 'pc_control');
-        this.reg0_control   = new Wire(3, simulation, 'reg0_control');
-        this.reg1_control   = new Wire(3, simulation, 'reg1_control');
-        this.reg2_control   = new Wire(3, simulation, 'reg2_control');
-        this.reg3_control   = new Wire(3, simulation, 'reg3_control');
-
         this.ir_control     = new Wire(3, simulation, 'ir_control');
-
         this.alu_control    = new Wire(4, simulation, 'alu_control');
 
-        this.pc   = new Register(this.pc_control,   this.addr_bus, this.data_bus, simulation, 'PC');
+        for(var i = 0; i < CPU.NUM_REGISTERS; i++) {
+            this.reg_control.push(new Wire(3, simulation, `reg${i}_control`));
+            this.reg.push(new Register(this.reg_control[i], addr_bus, data_bus, simulation, `REG${i}`));
+        }
 
-        this.reg0 = new Register(this.reg0_control, this.addr_bus, this.data_bus, simulation, 'REG0');
-        this.reg1 = new Register(this.reg1_control, this.addr_bus, this.data_bus, simulation, 'REG1');
-        this.reg2 = new Register(this.reg2_control, this.addr_bus, this.data_bus, simulation, 'REG2');
-        this.reg3 = new Register(this.reg3_control, this.addr_bus, this.data_bus, simulation, 'REG3');
-
-        this.alu         = new ALU(this.alu_control, this.reg0, this.reg1, this.data_bus, simulation);
+        this.alu         = new ALU(this.alu_control, this.reg[0], this.reg[1], this.data_bus, simulation);
+        this.pc          = new Register(this.pc_control, this.addr_bus, this.data_bus, simulation, 'PC');
         this.instruction = new Register(this.ir_control, this.addr_bus, this.data_bus, simulation, 'IR');
 
         this.state = this.fetch_instruction.bind(this)
@@ -471,10 +467,10 @@ export class CPU extends Component {
         //console.log('-- fetch_instruction')
         // Reset all controls for the next clock cycle
 
-        this.reg0_control   .write(CONTROL_REG_NOP)
-        this.reg1_control   .write(CONTROL_REG_NOP)
-        this.reg2_control   .write(CONTROL_REG_NOP)
-        this.reg3_control   .write(CONTROL_REG_NOP)
+        for (var c of this.reg_control) {
+            c.write(CONTROL_REG_NOP)
+        }
+
         this.alu_control    .write(CONTROL_ALU_NOP)
 
         // put value that pc points to into ir
@@ -502,10 +498,9 @@ export class CPU extends Component {
 
         this.memory_control.write(CONTROL_MEM_NOP)
 
-        this.reg0_control.write(CONTROL_REG_NOP)
-        this.reg1_control.write(CONTROL_REG_NOP)
-        this.reg2_control.write(CONTROL_REG_NOP)
-        this.reg3_control.write(CONTROL_REG_NOP)
+        for (var c of this.reg_control) {
+            c.write(CONTROL_REG_NOP)
+        }
 
         switch (op.op_code) {
             case OP_NOP:
@@ -513,12 +508,7 @@ export class CPU extends Component {
                 break
 
             case OP_ADD:
-                switch(op.reg0) {
-                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
-                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
-                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
-                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
-                }
+                this.reg_control[op.reg0].write(CONTROL_REG_READ_DATA)
                 this.alu_control.write(CONTROL_ALU_ADD);
                 return this.increase_pc
                 break;
@@ -535,12 +525,7 @@ export class CPU extends Component {
 
             case OP_JUMP:
                 this.pc_control.write(CONTROL_REG_READ_DATA)
-                switch(op.reg0) {
-                    case 0: this.reg0_control.write(CONTROL_REG_WRITE_DATA); break
-                    case 1: this.reg1_control.write(CONTROL_REG_WRITE_DATA); break
-                    case 2: this.reg2_control.write(CONTROL_REG_WRITE_DATA); break
-                    case 3: this.reg3_control.write(CONTROL_REG_WRITE_DATA); break
-                }
+                this.reg_control[op.reg0].write(CONTROL_REG_WRITE_DATA)
                 return this.fetch_instruction
                 break;
 
@@ -548,57 +533,32 @@ export class CPU extends Component {
                 switch (this.alu.status) {
                     case ALU.STATUS_EQUAL:
                         this.pc_control.write(CONTROL_REG_READ_DATA)
-                        switch(op.reg0) {
-                            case 0: this.reg0_control.write(CONTROL_REG_WRITE_DATA); break
-                            case 1: this.reg1_control.write(CONTROL_REG_WRITE_DATA); break
-                            case 2: this.reg2_control.write(CONTROL_REG_WRITE_DATA); break
-                            case 3: this.reg3_control.write(CONTROL_REG_WRITE_DATA); break
-                        }
+                        this.reg_control[op.reg0].write(CONTROL_REG_WRITE_DATA)
                         return this.fetch_instruction
                     default:
                         return this.increase_pc
                 }
                 break;
             case OP_INV:
-                switch(op.reg0) {
-                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
-                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
-                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
-                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
-                }
+                this.reg_control[op.reg0].write(CONTROL_REG_READ_DATA)
                 this.alu_control.write(CONTROL_ALU_INV);
                 return this.increase_pc
                 break;
 
             case OP_NAND:
-                switch(op.reg0) {
-                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
-                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
-                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
-                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
-                }
+                this.reg_control[op.reg0].write(CONTROL_REG_READ_DATA)
                 this.alu_control.write(CONTROL_ALU_NAND);
                 return this.increase_pc
                 break;
 
             case OP_SHIFT_LEFT:
-                switch(op.reg0) {
-                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
-                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
-                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
-                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
-                }
+                this.reg_control[op.reg0].write(CONTROL_REG_READ_DATA)
                 this.alu_control.write(CONTROL_ALU_SHIFT_L);
                 return this.increase_pc
                 break;
 
             case OP_SHIFT_RIGHT:
-                switch(op.reg0) {
-                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
-                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
-                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
-                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
-                }
+                this.reg_control[op.reg0].write(CONTROL_REG_READ_DATA)
                 this.alu_control.write(CONTROL_ALU_SHIFT_R);
                 return this.increase_pc
                 break;
@@ -606,34 +566,14 @@ export class CPU extends Component {
             case OP_LOAD:
                 this.memory_control.write(CONTROL_MEM_WRITE_DATA);
 
-                switch(op.reg0) {
-                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
-                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
-                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
-                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
-                }
-                switch(op.reg1) {
-                    case 0: this.reg0_control.write(CONTROL_REG_WRITE_ADDR); break
-                    case 1: this.reg1_control.write(CONTROL_REG_WRITE_ADDR); break
-                    case 2: this.reg2_control.write(CONTROL_REG_WRITE_ADDR); break
-                    case 3: this.reg3_control.write(CONTROL_REG_WRITE_ADDR); break
-                }
+                this.reg_control[op.reg0].write(CONTROL_REG_READ_DATA)
+                this.reg_control[op.reg1].write(CONTROL_REG_WRITE_ADDR)
                 return this.increase_pc
                 break;
 
             case OP_STORE:
-                switch(op.reg0) {
-                    case 0: this.reg0_control.write(CONTROL_REG_WRITE_DATA); break
-                    case 1: this.reg1_control.write(CONTROL_REG_WRITE_DATA); break
-                    case 2: this.reg2_control.write(CONTROL_REG_WRITE_DATA); break
-                    case 3: this.reg3_control.write(CONTROL_REG_WRITE_DATA); break
-                }
-                switch(op.reg1) {
-                    case 0: this.reg0_control.write(CONTROL_REG_WRITE_ADDR); break
-                    case 1: this.reg1_control.write(CONTROL_REG_WRITE_ADDR); break
-                    case 2: this.reg2_control.write(CONTROL_REG_WRITE_ADDR); break
-                    case 3: this.reg3_control.write(CONTROL_REG_WRITE_ADDR); break
-                }
+                this.reg_control[op.reg0].write(CONTROL_REG_WRITE_DATA)
+                this.reg_control[op.reg1].write(CONTROL_REG_WRITE_ADDR)
                 // Hack until we have a cleaner architecture: reset memory_control's
                 // write counter so we don't have to reset everything in all other
                 // cases except this one.
@@ -644,29 +584,14 @@ export class CPU extends Component {
                 break;
 
             case OP_SET:
-                switch(op.reg0) {
-                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
-                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
-                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
-                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
-                }
+                this.reg_control[op.reg0].write(CONTROL_REG_READ_DATA)
                 this.data_bus.write(op.value)
                 return this.increase_pc
                 break
 
             case OP_MOVE:
-                switch(op.reg0) {
-                    case 0: this.reg0_control.write(CONTROL_REG_READ_DATA); break
-                    case 1: this.reg1_control.write(CONTROL_REG_READ_DATA); break
-                    case 2: this.reg2_control.write(CONTROL_REG_READ_DATA); break
-                    case 3: this.reg3_control.write(CONTROL_REG_READ_DATA); break
-                }
-                switch(op.reg1) {
-                    case 0: this.reg0_control.write(CONTROL_REG_WRITE_DATA); break
-                    case 1: this.reg1_control.write(CONTROL_REG_WRITE_DATA); break
-                    case 2: this.reg2_control.write(CONTROL_REG_WRITE_DATA); break
-                    case 3: this.reg3_control.write(CONTROL_REG_WRITE_DATA); break
-                }
+                this.reg_control[op.reg0].write(CONTROL_REG_READ_DATA)
+                this.reg_control[op.reg1].write(CONTROL_REG_WRITE_DATA)
                 return this.increase_pc
                 break
 
@@ -751,10 +676,12 @@ export class Machine extends Component {
     dumpstate() {
         console.log(`Machine state: IR    = ${this.cpu.instruction.value.toString(16)}`)
         console.log(`               PC    = ${this.cpu.pc.value.toString(16)}`)
-        console.log(`               R0    = ${this.cpu.reg0.value.toString(16)}`)
-        console.log(`               R1    = ${this.cpu.reg1.value.toString(16)}`)
-        console.log(`               R2    = ${this.cpu.reg2.value.toString(16)}`)
-        console.log(`               R3    = ${this.cpu.reg3.value.toString(16)}`)
+
+        var i=0
+        for (var r of this.cpu.reg) {
+            console.log(`               R${i}    = ${r.value.toString(16)}`)
+                i++
+        }
         console.log(`       ALU status    = ${this.cpu.alu.status}`)
         console.log(`         Data Bus    = ${this.data_bus.value.toString(16)}`)
         console.log(`         Addr Bus    = ${this.addr_bus.value.toString(16)}`)
