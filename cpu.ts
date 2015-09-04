@@ -38,6 +38,14 @@ const OP_SET             = 0x0d;
 
 
 export class DEBUG {
+
+    static getcaller(level:number) {
+        var stack = new Error()['stack']
+        var elems = stack.split('\n')
+        var e = elems[level+2]
+        return e.trim().replace('at ', '')
+    }
+
     static op_to_str(op:Operation) {
         switch(op.op_type) {
             case OPTYPE_R0_V0:
@@ -87,19 +95,57 @@ export class Component {
 }
 
 export class Simulation {
-    queue: Component[]
+    queue:   Component[]
+    current: Component[]
 
     constructor() {
-        this.queue = []
+        this.queue   = []
+        this.current = []
+    }
+
+    in_list(l: Component[], c: Component):boolean {
+        for (var e of l) {
+            if (e === c) {
+                return true
+            }
+        }
+        return false
     }
 
     notify(c: Component) {
+
+        if (!c.identifier) {
+            var caller = DEBUG.getcaller(2)
+            throw 'Notifying undefined object? - ' + caller
+        }
+
+        if (this.in_list(this.current, c)) {
+            //console.log(`not queueing ${c.identifier}, would cause loop`)
+            return
+        }
+
+        // Make sure our element is the last in the queue,
+        // also ensure we don't do duplicates
+        var new_queue:Component[] = this.queue.filter(
+            function (elem:Component):boolean { return elem !== c}
+        )
+
+        //console.log(`queueing: ${c.identifier}, requested via ${DEBUG.getcaller(1)}`)
+        this.queue = new_queue
         this.queue.push(c)
     }
 
     handle_next() {
-        var c = this.queue.pop()
+        if (this.queue.length == 0) {
+            return false;
+        }
+        var c = this.queue.shift()
+        var prev = this.current
+        this.current.push(c)
+        //console.log(`#### Updating ${c.identifier}`)
         c.update()
+        this.current.pop()
+        return true;
     }
 }
 
@@ -121,23 +167,37 @@ export class Wire extends Component {
     write_count: number;
 
     constructor(width:number, simulation:Simulation, identifier='') {
-        super(simulation)
+        super(simulation, identifier)
+        this.targets = []
         this.width = width;
         this.value = 0;
-        this.identifier = identifier;
     }
 
     write(value:number) {
-        this.write_count++;
-        this.value = value;
+        if (this.write_count > 0) {
+            throw new Error(`Multiple writes to ${this.identifier} during single clock cycle, check CPU`)
+        }
+        if (this.value != value) {
+            this.write_count++;
+            this.value = value;
+            this.simulation.notify(this)
+        }
+    }
+
+    subscribe(c: Component) {
+        if (!c.identifier) {
+            var caller = DEBUG.getcaller(1)
+            throw 'Unknown subscriber - ' + caller
+        }
+
+        this.targets.push(c)
     }
 
     update() {
-        // No action - just sanity check
-        if (this.write_count > 1) {
-            throw `Multiple writes to ${this.identifier} during single clock cycle, check CPU`;
-        }
         this.write_count = 0
+        for (var t of this.targets) {
+            this.simulation.notify(t)
+        }
     }
 }
 
@@ -149,10 +209,14 @@ export class Memory extends Component {
     data_bus:    Wire;
 
     constructor(control:Wire, addr_bus: Wire, data_bus: Wire, size:number, simulation:Simulation) {
-        super(simulation);
+        super(simulation, 'Memory');
         this.control_bus = control;
         this.addr_bus    = addr_bus;
         this.data_bus    = data_bus;
+
+        this.data_bus   .subscribe(this)
+        this.addr_bus   .subscribe(this)
+        this.control_bus.subscribe(this)
 
         this.storage = []
         for (var i=0; i< size; i++) {
@@ -165,15 +229,16 @@ export class Memory extends Component {
         switch (this.control_bus.value) {
             case CONTROL_MEM_WRITE_DATA:
                 tmp = this.storage[this.addr_bus.value]
-                this.data_bus.write(tmp);
-
                 //console.log(`Memory: WRITE TO DATA BUS: ${tmp.toString(16)}`)
+                this.data_bus.write(tmp);
                 break;
+
             case CONTROL_MEM_READ_DATA:
                 tmp = this.data_bus.value
+                //console.log(`Memory: READ FROM DATA BUS: addr=${this.addr_bus.value.toString(16)} val=${tmp.toString(16)}`)
                 this.storage[this.addr_bus.value] = tmp
-                //console.log(`Memory: READ FROM DATA BUS: ${tmp.toString(16)}`)
                 break;
+
             case CONTROL_MEM_NOP:
             default:
                 break;
@@ -193,18 +258,20 @@ export class Register extends Component {
         this.addr_bus    = addr_bus;
         this.data_bus    = data_bus;
         this.value       = 0;
+
+        this.data_bus   .subscribe(this)
+        this.addr_bus   .subscribe(this)
+        this.control_bus.subscribe(this)
     }
     update() {
         switch (this.control_bus.value) {
             case CONTROL_REG_WRITE_DATA:
                 //console.log(`Reg ${this.identifier}: WRITE TO DATA BUS: ${this.value.toString(16)}`)
                 this.data_bus.write(this.value);
-                this.simulation.notify(this.data_bus)
                 break;
             case CONTROL_REG_WRITE_ADDR:
                 //console.log(`Reg ${this.identifier}: WRITE TO ADDR BUS: ${this.value.toString(16)}`)
                 this.addr_bus.write(this.value);
-                this.simulation.notify(this.addr_bus)
                 break;
             case CONTROL_REG_INCREASE:
                 this.value += 1;
@@ -213,7 +280,6 @@ export class Register extends Component {
             default:
             case CONTROL_REG_READ_DATA:
                 this.value = this.data_bus.value
-                this.simulation.notify(this.data_bus)
                 //console.log(`Reg ${this.identifier}: READ FROM DATA BUS: ${this.value.toString(16)}`)
                 break;
             case CONTROL_REG_NOP:
@@ -236,12 +302,15 @@ export class ALU extends Component {
     status:      number;
 
     constructor(control:Wire, reg_op0:Register, reg_op1:Register, output:Wire, simulation:Simulation) {
-        super(simulation);
+        super(simulation, 'ALU');
 
         this.control_bus = control;
         this.reg_op0     = reg_op0;
         this.reg_op1     = reg_op1;
         this.output      = output;
+
+
+        control.subscribe(this)
 
         this.status      = 0x00;
     }
@@ -254,7 +323,6 @@ export class ALU extends Component {
                 this.status = (this.reg_op0.value + this.reg_op1.value > 0xffff)
                      ? ALU.STATUS_CARRY
                      : ALU.STATUS_OK;
-                this.simulation.notify(this.output)
                 break;
 
             case CONTROL_ALU_CMP:
@@ -266,26 +334,22 @@ export class ALU extends Component {
                     : ALU.STATUS_OK;
 
                 this.output.write(tmp);
-                this.simulation.notify(this.output)
                 break;
 
             case CONTROL_ALU_NAND:
                 tmp = ~(this.reg_op0.value & this.reg_op1.value) & 0XFFFF
                 this.output.write(tmp);
-                this.simulation.notify(this.output)
                 this.status = ALU.STATUS_OK;
                 break;
 
             case CONTROL_ALU_INV:
                 tmp = ~(this.reg_op0.value) & 0XFFFF
                 this.output.write(tmp);
-                this.simulation.notify(this.output)
                 this.status = ALU.STATUS_OK;
                 break;
             case CONTROL_ALU_SHIFT_R:
                 tmp = (this.reg_op0.value >> this.reg_op1.value) & 0XFFFF
                 this.output.write(tmp);
-                this.simulation.notify(this.output)
                 this.status = ALU.STATUS_OK;
                 break;
 
@@ -293,7 +357,6 @@ export class ALU extends Component {
                 tmp = (this.reg_op0.value << this.reg_op1.value) & 0XFFFF
                 //console.log(`ALU: SHIFT L ${this.reg_op0.value.toString(16)} ${this.reg_op1.value.toString(16)} = ${tmp.toString(16)}`)
                 this.output.write(tmp);
-                this.simulation.notify(this.output)
                 this.status = ALU.STATUS_OK;
                 break;
 
@@ -330,7 +393,7 @@ export class CPU extends Component {
     state:       Function;
 
     constructor(memory_control: Wire, addr_bus: Wire, data_bus: Wire, simulation:Simulation) {
-        super(simulation);
+        super(simulation, 'Controller');
 
         this.addr_bus       = addr_bus;
         this.data_bus       = data_bus;
@@ -346,20 +409,15 @@ export class CPU extends Component {
 
         this.alu_control    = new Wire(4, simulation, 'alu_control');
 
-        this.pc = new Register(this.pc_control, this.addr_bus, this.data_bus, simulation, 'PC');
+        this.pc   = new Register(this.pc_control,   this.addr_bus, this.data_bus, simulation, 'PC');
 
         this.reg0 = new Register(this.reg0_control, this.addr_bus, this.data_bus, simulation, 'REG0');
         this.reg1 = new Register(this.reg1_control, this.addr_bus, this.data_bus, simulation, 'REG1');
         this.reg2 = new Register(this.reg2_control, this.addr_bus, this.data_bus, simulation, 'REG2');
         this.reg3 = new Register(this.reg3_control, this.addr_bus, this.data_bus, simulation, 'REG3');
 
-
         this.alu         = new ALU(this.alu_control, this.reg0, this.reg1, this.data_bus, simulation);
         this.instruction = new Register(this.ir_control, this.addr_bus, this.data_bus, simulation, 'IR');
-
-        // Initial instruction: Jump to memory location 0
-        //this.instruction.value = OP_JUMP << 12;
-
 
         this.state = this.fetch_instruction.bind(this)
     }
@@ -441,6 +499,8 @@ export class CPU extends Component {
 
         this.pc_control.write(CONTROL_REG_NOP)
         this.ir_control.write(CONTROL_REG_NOP)
+
+        this.memory_control.write(CONTROL_MEM_NOP)
 
         this.reg0_control.write(CONTROL_REG_NOP)
         this.reg1_control.write(CONTROL_REG_NOP)
@@ -562,7 +622,6 @@ export class CPU extends Component {
                 break;
 
             case OP_STORE:
-                this.memory_control.write(CONTROL_MEM_READ_DATA);
                 switch(op.reg0) {
                     case 0: this.reg0_control.write(CONTROL_REG_WRITE_DATA); break
                     case 1: this.reg1_control.write(CONTROL_REG_WRITE_DATA); break
@@ -575,6 +634,12 @@ export class CPU extends Component {
                     case 2: this.reg2_control.write(CONTROL_REG_WRITE_ADDR); break
                     case 3: this.reg3_control.write(CONTROL_REG_WRITE_ADDR); break
                 }
+                // Hack until we have a cleaner architecture: reset memory_control's
+                // write counter so we don't have to reset everything in all other
+                // cases except this one.
+                this.memory_control.write_count = 0
+                this.memory_control.write(CONTROL_MEM_READ_DATA)
+
                 return this.increase_pc
                 break;
 
@@ -610,19 +675,7 @@ export class CPU extends Component {
     update() {
         if (typeof this.state != 'function') { console.log("Halted"); return }
 
-        this.instruction .update();
-
         this.state = this.state();
-
-        this.reg0        .update();
-        this.reg1        .update();
-        this.reg2        .update();
-        this.reg3        .update();
-
-        this.pc          .update();
-
-        // ALU last - it needs the written values from the registers
-        this.alu         .update();
 
     }
 }
@@ -648,9 +701,9 @@ export class Machine extends Component {
 
         this.output = output;
 
-        this.memory_control = new Wire( 2, this.simulation);
-        this.data_bus       = new Wire(16, this.simulation)
-        this.addr_bus       = new Wire(16, this.simulation)
+        this.memory_control = new Wire( 2, this.simulation, 'Memory CTRL');
+        this.data_bus       = new Wire(16, this.simulation, 'data bus')
+        this.addr_bus       = new Wire(16, this.simulation, 'addr bus')
         this.memory         = new Memory(this.memory_control, this.addr_bus, this.data_bus, 1 << 16, this.simulation)
         this.cpu            = new CPU(this.memory_control, this.addr_bus, this.data_bus, this.simulation);
 
@@ -658,9 +711,13 @@ export class Machine extends Component {
     }
 
     update() {
-        //console.log("####################### Machine clock cycle up ############")
+        //console.log("####################### Machine clock ############")
         this.cpu   .update();
-        this.memory.update();
+
+        // Let the state machine run
+        while (this.simulation.handle_next()) {
+            ;
+        }
 
         this.handle_io();
     }
@@ -709,6 +766,6 @@ export class Machine extends Component {
             this.memory.storage[offset+count] = op
             count++
         }
-        console.log(`Loaded program of length ${count} at offset ${offset}`)
+        //console.log(`Loaded program of length ${count} at offset ${offset}`)
     }
 }

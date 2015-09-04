@@ -16,46 +16,57 @@ var program = [
 
 
     assembler.OP_SET(3, 0x48), // H
+    assembler.OP_STORE(3, 2),  // Write to output buffer
     assembler.OP_SET(3, 0x00), // Clear output buffer
     assembler.OP_STORE(3, 2),  // Write to output buffer
 
     assembler.OP_SET(3, 0x65), // e
+    assembler.OP_STORE(3, 2),  // Write to output buffer
     assembler.OP_SET(3, 0x00), // Clear output buffer
     assembler.OP_STORE(3, 2),  // Write to output buffer
 
     assembler.OP_SET(3, 0x6c), // l
+    assembler.OP_STORE(3, 2),  // Write to output buffer
     assembler.OP_SET(3, 0x00), // Clear output buffer
     assembler.OP_STORE(3, 2),  // Write to output buffer
 
     assembler.OP_SET(3, 0x6c), // l
+    assembler.OP_STORE(3, 2),  // Write to output buffer
     assembler.OP_SET(3, 0x00), // Clear output buffer
     assembler.OP_STORE(3, 2),  // Write to output buffer
 
     assembler.OP_SET(3, 0x6f), // o
+    assembler.OP_STORE(3, 2),  // Write to output buffer
     assembler.OP_SET(3, 0x00), // Clear output buffer
     assembler.OP_STORE(3, 2),  // Write to output buffer
 
     assembler.OP_SET(3, 0x20), // (space)
+    assembler.OP_STORE(3, 2),  // Write to output buffer
     assembler.OP_SET(3, 0x00), // Clear output buffer
     assembler.OP_STORE(3, 2),  // Write to output buffer
 
     assembler.OP_SET(3, 0x57), // W
+    assembler.OP_STORE(3, 2),  // Write to output buffer
     assembler.OP_SET(3, 0x00), // Clear output buffer
     assembler.OP_STORE(3, 2),  // Write to output buffer
 
     assembler.OP_SET(3, 0x6f), // o
+    assembler.OP_STORE(3, 2),  // Write to output buffer
     assembler.OP_SET(3, 0x00), // Clear output buffer
     assembler.OP_STORE(3, 2),  // Write to output buffer
 
     assembler.OP_SET(3, 0x72), // r
+    assembler.OP_STORE(3, 2),  // Write to output buffer
     assembler.OP_SET(3, 0x00), // Clear output buffer
     assembler.OP_STORE(3, 2),  // Write to output buffer
 
     assembler.OP_SET(3, 0x6c), // l
+    assembler.OP_STORE(3, 2),  // Write to output buffer
     assembler.OP_SET(3, 0x00), // Clear output buffer
     assembler.OP_STORE(3, 2),  // Write to output buffer
 
     assembler.OP_SET(3, 0x64), // d
+    assembler.OP_STORE(3, 2),  // Write to output buffer
     assembler.OP_SET(3, 0x00), // Clear output buffer
     assembler.OP_STORE(3, 2),  // Write to output buffer
 
@@ -68,7 +79,7 @@ var machine = new cpu.Machine(function(data){console.log(data)});
 machine.load_program(0, program)
 
 for (var op of machine.memory.storage.slice(0, program.length)) {
-    console.log(op.toString(16) + ' ' + cpu.DEBUG.op_to_str(machine.cpu.decode(op)))
+    //console.log(op.toString(16) + ' ' + cpu.DEBUG.op_to_str(machine.cpu.decode(op)))
 }
 
 while(machine.is_running()) {
