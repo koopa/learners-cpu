@@ -75,14 +75,48 @@ var program = [
 
 ]
 
-var machine = new cpu.Machine(function(data){console.log(data)});
+// First test
+var output  = ''
+var machine = new cpu.Machine(function(data){output += data});
 machine.load_program(0, program)
-
-for (var op of machine.memory.storage.slice(0, program.length)) {
-    //console.log(op.toString(16) + ' ' + cpu.DEBUG.op_to_str(machine.cpu.decode(op)))
-}
 
 while(machine.is_running()) {
     machine.update();
 }
-machine.dumpstate();
+console.log("Machine 1: ", output)
+
+
+// Second test - using higher assembler tools
+var output2  = ''
+var machine2 = new cpu.Machine(function(data){output2 += data});
+
+var program2 = new assembler.Routine(0)
+program2.SET(4, 0x48)
+program2.macro(assembler.MACRO_OUTPUT(2,3, 4)) // H
+program2.SET(4, 0x65)
+program2.macro(assembler.MACRO_OUTPUT(2,3, 4)) // e
+program2.SET(4, 0x6c)
+program2.macro(assembler.MACRO_OUTPUT(2,3, 4)) // l
+program2.SET(4, 0x6c)
+program2.macro(assembler.MACRO_OUTPUT(2,3, 4)) // l
+program2.SET(4, 0x6f)
+program2.macro(assembler.MACRO_OUTPUT(2,3, 4)) // o
+program2.SET(4, 0x20)
+program2.macro(assembler.MACRO_OUTPUT(2,3, 4)) // (space)
+program2.SET(4, 0x57)
+program2.macro(assembler.MACRO_OUTPUT(2,3, 4)) // W
+program2.SET(4, 0x6f)
+program2.macro(assembler.MACRO_OUTPUT(2,3, 4)) // o
+program2.SET(4, 0x72)
+program2.macro(assembler.MACRO_OUTPUT(2,3, 4)) // r
+program2.SET(4, 0x6c)
+program2.macro(assembler.MACRO_OUTPUT(2,3, 4)) // l
+program2.SET(4, 0x64)
+program2.macro(assembler.MACRO_OUTPUT(2,3, 4)) // d
+
+machine2.load_program(0, program2.instructions)
+
+while(machine2.is_running()) {
+    machine2.update();
+}
+console.log("Machine 2: ", output2)
