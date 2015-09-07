@@ -14,11 +14,10 @@
 	@#@babel es6_$@ -o $@
 	@#@rm es6_$@
 
-all: test.js cpu.js
+all: assembler.js test.js cpu.js
 
 clean:
 	@rm -f *.js || true
-	@rm -f *.es6 || true
 
 
 test: all
